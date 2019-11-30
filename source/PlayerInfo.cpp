@@ -1114,10 +1114,10 @@ bool PlayerInfo::TakeOff(UI *ui)
 		ships.erase(it);
 		ships.insert(ships.begin(), flagship);
 	}
-	// Make sure your ships all know who the flagship is.
+	// Make sure your jump-capable ships all know who the flagship is.
 	for(const shared_ptr<Ship> &ship : ships)
 	{
-		bool shouldHaveParent = (ship != flagship && !ship->IsParked() && !ship->CanBeCarried());
+		bool shouldHaveParent = (ship != flagship && !ship->IsParked() && (!ship->CanBeCarried() || ship->JumpFuel()));
 		ship->SetParent(shouldHaveParent ? flagship : shared_ptr<Ship>());
 	}
 	// Make sure your flagship is not included in the escort selection.
@@ -1302,7 +1302,9 @@ bool PlayerInfo::TakeOff(UI *ui)
 			income += cost;
 		}
 	}
-	accounts.AddCredits(income);
+	int64_t grossProfit = income - totalBasis;
+	int64_t sharedProfit = Crew::ShareProfit(ships, Flagship(), grossProfit);
+	accounts.AddCredits(income - sharedProfit);
 	cargo.Clear();
 	stockDepreciation = Depreciation();
 	if(sold)
@@ -1310,10 +1312,12 @@ bool PlayerInfo::TakeOff(UI *ui)
 		// Report how much excess cargo was sold, and what profit you earned.
 		ostringstream out;
 		out << "You sold " << sold << " tons of excess cargo for " << Format::Credits(income) << " credits";
-		if(totalBasis && totalBasis != income)
-			out << " (for a profit of " << (income - totalBasis) << " credits).";
-		else
-			out << ".";
+		if(grossProfit > 0)
+			out << " (for a profit of " << Format::Credits(grossProfit) << " credits)";
+		if(sharedProfit > 0)
+			out << " and distributed " + Format::Credits(sharedProfit) + " credits among your crew";
+		out << ".";
+		
 		Messages::Add(out.str());
 	}
 	

@@ -32,6 +32,8 @@ void Crew::Load(const DataNode &node)
 				name = child.Token(1);
 			else if(child.Token(0) == "parked salary")
 				parkedSalary = max((int)child.Value(1), 0);
+			else if(child.Token(0) == "parked shares")
+				parkedShares = max((int)child.Value(1), 0);
 			else if(child.Token(0) == "place at")
 				for(int crewNumber = 1; crewNumber < child.Size(); ++crewNumber)
 					placeAt.push_back(max((int)child.Value(crewNumber), 0));
@@ -39,6 +41,8 @@ void Crew::Load(const DataNode &node)
 				shipPopulationPerMember = max((int)child.Value(1), 0);
 			else if(child.Token(0) == "salary")
 				salary = max((int)child.Value(1), 0);
+			else if(child.Token(0) == "shares")
+				shares = max((int)child.Value(1), 0);
 			else
 				child.PrintTrace("Skipping unrecognized attribute:");
 		}
@@ -82,34 +86,35 @@ int64_t Crew::CostOfExtraCrew(const vector<shared_ptr<Ship>> &ships, const Ship 
 
 int64_t Crew::NumberOnShip(const Crew &crew, const shared_ptr<Ship> &ship, const bool isFlagship, const bool includeExtras)
 {
+	int64_t count = 0;
+	
 	// If this is the flagship, check if this crew avoids the flagship.
 	if(isFlagship && crew.AvoidsFlagship())
-		return 0;
+		return count;
 	// If this is an escort, check if this crew avoids escorts.
 	if(!isFlagship && crew.AvoidsEscorts())
-		return 0;
+		return count;
 	
 	const int64_t countableCrewMembers = includeExtras
 		? ship->Crew()
 		: ship->RequiredCrew();
 	
-	int64_t numberOnShip = 0;
 	// Total up the placed crew members within the ship's countable crew
 	for(int64_t crewNumber : crew.PlaceAt())
 		if(crewNumber <= countableCrewMembers)
-			++numberOnShip;
+			++count;
 		
 	// Prevent division by zero so that the universe doesn't implode.
 	if(crew.ShipPopulationPerMember())
 	{
 		// Figure out how many of this kind of crew we have, by population.
-		numberOnShip = max(
-			numberOnShip,
+		count = max(
+			count,
 			countableCrewMembers / crew.ShipPopulationPerMember()
 		);
 	}
 	
-	return numberOnShip;
+	return count;
 }
 
 
@@ -132,8 +137,32 @@ int64_t Crew::SalariesForShip(const shared_ptr<Ship> &ship, const bool isFlagshi
 	else
 		for(pair<const string, int64_t> entry : manifest)
 			salariesForShip += GameData::Crews().Get(entry.first)->Salary() * entry.second;
-		
+	
 	return salariesForShip;
+}
+
+
+
+double Crew::SharesForShip(const std::shared_ptr<Ship> &ship, const bool isFlagship, const bool includeExtras)
+{
+	// We don't need to pay dead people.
+	if(ship->IsDestroyed())
+		return 0;
+	
+	// Build a manifest of all of the crew members on the ship
+	const map<const string, int64_t> manifest = ShipManifest(ship, isFlagship, includeExtras);
+
+	int64_t sharesForShip = 0;
+	// Sum up all of the crew's shares
+	// For performance, check if the ship is parked once, not every loop
+	if(ship->IsParked())
+		for(pair<const string, int64_t> entry : manifest)
+			sharesForShip += GameData::Crews().Get(entry.first)->ParkedShares() * entry.second;
+	else
+		for(pair<const string, int64_t> entry : manifest)
+			sharesForShip += GameData::Crews().Get(entry.first)->Shares() * entry.second;
+	
+	return sharesForShip;
 }
 
 
@@ -193,6 +222,40 @@ const map<const string, int64_t> Crew::ShipManifest(const shared_ptr<Ship> &ship
 
 
 
+int64_t Crew::ShareProfit(
+	const std::vector<std::shared_ptr<Ship>> &ships,
+	const Ship * flagship,
+	const int64_t grossProfit
+)
+{
+	if(grossProfit <= 0) return 0;
+	
+	bool checkIfFlagship = true;
+	bool isFlagship = false;
+	
+	int64_t totalCrewShares = 0;
+	
+	for(const shared_ptr<Ship> &ship : ships)
+	{
+		if(checkIfFlagship)
+			isFlagship = ship.get() == flagship;
+		
+		totalCrewShares += Crew::SharesForShip(
+			ship,
+			ship.get() == flagship
+		);
+		
+		if(isFlagship)
+			isFlagship = checkIfFlagship = false;
+	}
+	
+	double totalFleetShares = Crew::CAPTAIN_SHARES + totalCrewShares;
+	
+	return grossProfit * totalCrewShares / totalFleetShares;
+}
+
+
+
 bool Crew::AvoidsEscorts() const
 {
 	return avoidsEscorts;
@@ -203,6 +266,20 @@ bool Crew::AvoidsEscorts() const
 bool Crew::AvoidsFlagship() const
 {
 	return avoidsFlagship;
+}
+
+
+
+double Crew::ParkedShares() const
+{
+	return parkedShares;
+}
+
+
+
+double Crew::Shares() const
+{
+	return shares;
 }
 
 
